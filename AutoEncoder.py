@@ -1,14 +1,14 @@
 import theano
-import numpy as np
 from theano import tensor as T
+import numpy as np
 from attrdict import AttrDict
 import sys
 
-def denoiser():
+def denoiser(input):
 
 class AutoEncoder:
-
-	def __init__(self, input=None, encoder='rnn', n_hidden=500, encoder_params=None, decoder_params=None augment=None):
+	# For Word Vectors Only
+	def __init__(self, input=None, encoder='RNN', n_hidden=500, encoder_params=None, decoder_params=None, augment=None):
 
 		# Generate input
 		self.x = augment(input) if augment else None
@@ -35,40 +35,38 @@ class AutoEncoder:
 			sys.exit('Invalid neuron')
 
 		# Encoder Choice
-		if encoder == 'rnn':
-			rnn = RNN(params=encoder_params, hdim=n_hidden, neuron=self.f)
-			self.get_hidden_values = rnn.get_hidden_values
-		elif encoder == 'deeprnn':
-			deeprnn = DeepRNN(params=encoder_params, hdim=n_hidden, neuron=self.f)
-			self.get_hidden_values = deeprnn.get_hidden_values
-		elif encoder == 'conv':
-			cnn = CNN(params=encoder_params, hdim=n_hidden, neuron=self.f)
-			self.get_hidden_values = cnn.get_hidden_values
-		else:
-			sys.exit('Invalid encoder')
+		self.encoder = globals()[encoder](params=encoder_params, hdim=n_hidden, f=self.f)
+		self.get_hidden_values = self.encoder.get_hidden_values
 
 	def get_reconstructed_input(self, hidden):
 		[h, s], _ - theano.scan(fn = _decoder_recurrence, outputs_info = [hidden, hidden], non_sequences = hidden)
-		return s
+		self.y = s
+		return s, theano.scan_module.until(STOPPING CONDITION)
 
 	def _decoder_recurrence(ht_1, yt_1, hidden):
 		h_t = f(T.dot(self.H, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
 		s_t = T.nnet.softmax(T.dot(self.S, h_t) + self.b)
 		return [h_t, s_t]
 
-	def get_reconstruction_error(self, input, output):
+	def get_cost_updates(self, corruption_level, learning_rate, input, output):
+		hidden_input = self.encoder.current_hidden
+		hidden_output = encoder.get_hidden_values(output)
 
+		L = np.linalg.norm(hidden_input - hidden_output)
 
-	def get_cost_updates(self, corruption_level, learning_rate):
+		encoder_decoder_params = self.params AND self.encoder.params
+		gparams = T.grad(L, encoder_decoder_params)
+
+		updates = [(param, param - learning_rate * gparam) for param, gparam in zip(self.params, gparams)]
+
+		return (L, updates)
 
 	def get_params(self):
 		return self.params.__dict__
 
-
-
 class RNN:
 
-	def __init__(self, params=None, hdim=None, neuron=None):
+	def __init__(self, params=None, hdim=None, f=None):
 		if params = None:
 			self.params.H = 
 		else:
@@ -81,12 +79,10 @@ class RNN:
 	#Input is a list of word vectors
 	def get_hidden_values(self, input):
 		h, _ = theano.scan(fn=_recurrence, sequences=input, outputs_info=self.h0)
-		return h[-1]
-
+		self.current_hidden = h[-1]
+		return self.hidden
 
 class DeepRNN:
 
 class CNN:
-
-
-
+	
