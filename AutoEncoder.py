@@ -6,6 +6,7 @@ import sys
 
 def corrupt(input):
 
+
 class AutoEncoder:
 	# For Word Vectors Only. Input is a two dimensional array, with input[i] a list of integers accessing  
 	def __init__(self, wordVectors, n_hidden=500, encoder='RNN', encoder_params=None, decoder_params=None):
@@ -22,12 +23,15 @@ class AutoEncoder:
 		else:
 			self.params = AttrDict(decoder_params)
 
+		self.decoder_params = [self.params.H, self.params.Y, self.params.C, self.params.S, self.params.b]
+
 		# Neuron Choice
 		if neuron == 'sigmoid':
 			self.f = T.nnet.sigmoid
 		if neuron == 'tanh':
 			self.f = T.tanh
 		if neuron == 'gate':
+			pass
 		else:
 			sys.exit('Invalid neuron')
 
@@ -49,21 +53,26 @@ class AutoEncoder:
 
 		return [h_t, s_t], theano.scan_module.until(np.argmax(s_t) == end_token)
 
-	def get_cost_updates(self, corruption_level, learning_rate, input, output):
-		hidden_input = self.encoder.current_hidden
-		hidden_output = encoder.get_hidden_values(output)
+	def get_cost_updates(self, input, end_token, corruption_level, learning_rate, corrupt=False):
+		hidden_input = self.encoder.get_hidden_values(input, corrupt)
+		output = self.get_reconstructed_input(hidden_input, end_token)
+		hidden_output = self.encoder.get_hidden_values(output)
 
 		L = np.linalg.norm(hidden_input - hidden_output)
 
-		encoder_decoder_params = self.params AND self.encoder.params
+		encoder_decoder_params = self.decoder_params + self.encoder.encoder_params
+
 		gparams = T.grad(L, encoder_decoder_params)
 
 		updates = [(param, param - learning_rate * gparam) for param, gparam in zip(self.params, gparams)]
 
 		return (L, updates)
 
-	def get_params(self):
+	def get_decoder_params(self):
 		return self.params.__dict__
+
+	def get_encoder_params(self):
+		return self.encoder.get_params()
 
 class RNN:
 
@@ -72,6 +81,8 @@ class RNN:
 			self.params.H = np.ones((hdim, hdim))
 		else:
 			self.params = AttrDict(params)
+
+		self.encoder_params = [self.params.H]
 
 		self.wordVectors = wordVectors
 
@@ -84,10 +95,16 @@ class RNN:
 	def get_hidden_values(self, input, corrupt=False):
 		h, _ = theano.scan(fn=_recurrence, sequences=corrupt(input), outputs_info=self.h0)
 		self.current_hidden = h[-1]
-		
+
 		return self.hidden
 
-class DeepRNN:
+	def get_params(self):
+		return self.params.__dict__
 
-class CNN:
+# class DeepRNN:
+
+# class CNN:
+
+# 	def __init__(self, wordVectors, params=None, context=3, numFilters=5)
+
 	
