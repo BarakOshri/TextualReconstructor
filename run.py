@@ -12,7 +12,7 @@ learning_rate = 0.05
 n_hidden = 50
 training_epochs = 3
 n_train_batches = 4
-end_token = T.dscalar('end_token')
+end_token = 0
 
 decoder_params = {
 	'H1' : theano.shared(value = np.zeros((n_hidden, n_hidden), dtype=theano.config.floatX), borrow=True),
@@ -27,7 +27,7 @@ encoder_params = {
 
 autoencoder = AutoEncoder(encoder_params, decoder_params, wordVectors, end_token, batch_size, input = x, n_hidden = n_hidden)
 cost, updates = autoencoder.get_cost_updates(learning_rate = learning_rate)
-train_autoencoder = theano.function([index], cost, updates = updates, givens = {x: X_train[index * batch_size : (index + 1) * batch_size], end_token: 0})
+train_autoencoder = theano.function([index], cost, updates = updates, givens = {x: X_train[index * batch_size : (index + 1) * batch_size]})
 
 start_time = time.clock()
 for epoch in xrange(training_epochs):

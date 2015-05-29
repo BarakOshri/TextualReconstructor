@@ -15,6 +15,7 @@ class AutoEncoder:
 		self.n_hidden = n_hidden
 		self.end_token = end_token
 		self.batch_size = batch_size
+		self.wordVectors = wordVectors
 
 		# Decoder Parameters
 		self.params = AttrDict(decoder_params)
@@ -40,7 +41,8 @@ class AutoEncoder:
 			self.x = input
 
 	def get_reconstructed_input(self, hidden):
-		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [hidden, hidden], non_sequences = hidden, n_steps = 40)
+		y0 = theano.shared(np.zeros((20, 5)))
+		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [hidden[-1], y0], non_sequences = hidden[-1], n_steps = 40)
 		self.s = s
 		self.y = np.argmax(s, axis=1)
 
@@ -48,11 +50,10 @@ class AutoEncoder:
 
 	def _decoder_recurrence(self, ht_1, yt_1, hidden):
 		h_t = self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))
-		s_t = T.nnet.softmax(T.dot(self.params.S, h_t) + self.params.B)
+		a = T.dot(self.params.S, h_t) + self.params.B
+		s_t = T.nnet.softmax(a.T)
 
-		# pdb.set_trace()
-
-		return [h_t, s_t], theano.scan_module.until(theano.tensor.eq(T.cast(np.argmax(s_t), 'int64'), self.end_token))
+		return [h_t, s_t], theano.scan_module.until(T.eq(np.argmax(T.nnet.softmax(T.dot(self.params.S, self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))) + self.params.B)), self.end_token))
 
 	def get_cost_updates(self, learning_rate):
 		hidden_input = self.encoder.get_hidden_values(self.x)
