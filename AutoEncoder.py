@@ -3,6 +3,7 @@ from theano import tensor as T
 import numpy as np
 from attrdict import AttrDict
 import sys
+import pdb
 
 #def corrupt(input):
 
@@ -39,17 +40,19 @@ class AutoEncoder:
 			self.x = input
 
 	def get_reconstructed_input(self, hidden):
-		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [hidden, hidden], non_sequences = hidden)
+		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [hidden, hidden], non_sequences = hidden, n_steps = 40)
 		self.s = s
 		self.y = np.argmax(s, axis=1)
 
 		return s
 
 	def _decoder_recurrence(self, ht_1, yt_1, hidden):
-		h_t = f(T.dot(self.H1, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
-		s_t = T.nnet.softmax(T.dot(self.S, h_t) + self.B)
+		h_t = self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))
+		s_t = T.nnet.softmax(T.dot(self.params.S, h_t) + self.params.B)
 
-		return [h_t, s_t], {y:y+1}, theano.scan_module.until(np.argmax(s_t) == self.end_token)
+		# pdb.set_trace()
+
+		return [h_t, s_t], theano.scan_module.until(theano.tensor.eq(T.cast(np.argmax(s_t), 'int64'), self.end_token))
 
 	def get_cost_updates(self, learning_rate):
 		hidden_input = self.encoder.get_hidden_values(self.x)
