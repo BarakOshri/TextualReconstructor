@@ -9,10 +9,11 @@ import sys
 
 class AutoEncoder:
 	# For Word Vectors Only. Input is a two dimensional array, with input[i] a list of integers accessing  
-	def __init__(self, encoder_params, decoder_params, wordVectors, end_token, input=None, n_hidden=500, encoder='RNN', f='sigmoid'):
+	def __init__(self, encoder_params, decoder_params, wordVectors, end_token, batch_size, input=None, n_hidden=500, encoder='RNN', f='sigmoid'):
 
 		self.n_hidden = n_hidden
 		self.end_token = end_token
+		self.batch_size = batch_size
 
 		# Decoder Parameters
 		self.params = AttrDict(decoder_params)
@@ -29,7 +30,7 @@ class AutoEncoder:
 			sys.exit('Invalid neuron')
 
 		# Encoder Choice
-		self.encoder = globals()[encoder](wordVectors, n_hidden, params=encoder_params, hdim=n_hidden, f=self.f)
+		self.encoder = globals()[encoder](wordVectors, n_hidden, batch_size, params=encoder_params, hdim=n_hidden, f=self.f)
 		self.get_hidden_values = self.encoder.get_hidden_values
 
 		if input is None:
@@ -38,7 +39,7 @@ class AutoEncoder:
 			self.x = input
 
 	def get_reconstructed_input(self, hidden):
-		[h, s], _ - theano.scan(fn = self._decoder_recurrence, outputs_info = [hidden, hidden], non_sequences = hidden)
+		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [hidden, hidden], non_sequences = hidden)
 		self.s = s
 		self.y = np.argmax(s, axis=1)
 
@@ -48,10 +49,10 @@ class AutoEncoder:
 		h_t = f(T.dot(self.H1, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
 		s_t = T.nnet.softmax(T.dot(self.S, h_t) + self.B)
 
-		return [h_t, s_t], theano.scan_module.until(np.argmax(s_t) == self.end_token)
+		return [h_t, s_t], {y:y+1}, theano.scan_module.until(np.argmax(s_t) == self.end_token)
 
 	def get_cost_updates(self, learning_rate):
-		hidden_input = self.encoder.get_hidden_values(input)
+		hidden_input = self.encoder.get_hidden_values(self.x)
 		output = self.get_reconstructed_input(hidden_input)
 		hidden_output = self.encoder.get_hidden_values(output)
 
@@ -72,25 +73,27 @@ class AutoEncoder:
 
 class RNN:
 
-	def __init__(self, wordVectors, n_hidden, params=None, hdim=None, f=None):
+	def __init__(self, wordVectors, n_hidden, batch_size, params=None, hdim=None, f=None):
 		self.params = AttrDict(params)
 		self.encoder_params = [self.params.H2]
-		self.h0 = theano.shared(np.zeros((n_hidden), dtype=theano.config.floatX))
 		self.n_hidden = n_hidden
+		self.batch_size = batch_size
+		self.f = f
+		self.h0 = theano.shared(np.zeros((self.n_hidden, batch_size)))
 
 		self.wordVectors = wordVectors
 
 	def _recurrence(self, x_t, h_tm1):
-		h_t = self.f(T.dot(self.H2, h_tm1) + wordVectors[x_t])
+		h_t = self.f(T.dot(self.params.H2, h_tm1) + self.wordVectors[T.cast(x_t, 'int64')])
 
 		return h_t
 
 	#Input is a list of word vectors
 	def get_hidden_values(self, input):
-		h, _ = theano.scan(fn=self._recurrence, sequences=input, outputs_info=self.h0)
+		h, _ = theano.scan(fn = self._recurrence, sequences = input.T, outputs_info = self.h0)
 		self.current_hidden = h[-1]
 
-		return self.hidden
+		return self.current_hidden
 
 	def get_params(self):
 		return self.params.__dict__

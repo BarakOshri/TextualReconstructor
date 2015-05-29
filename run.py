@@ -6,7 +6,7 @@ from AutoEncoder import *
 index = T.lscalar()
 x = T.matrix('x')
 
-wordVectors = np.zeros((20, 5))
+wordVectors = theano.shared(value = np.zeros((20, 5), dtype=theano.config.floatX))
 batch_size = 5
 learning_rate = 0.05
 n_hidden = 50
@@ -16,16 +16,16 @@ end_token = 0
 
 decoder_params = {
 	'H1' : theano.shared(value = np.zeros((n_hidden, n_hidden), dtype=theano.config.floatX), borrow=True),
-	'Y' : theano.shared(value = np.zeros((n_hidden, len(wordVectors)), dtype=theano.config.floatX), borrow=True),
+	'Y' : theano.shared(value = np.zeros((n_hidden, 20), dtype=theano.config.floatX), borrow=True),
 	'C' : theano.shared(value = np.zeros((n_hidden, n_hidden), dtype=theano.config.floatX), borrow=True),
-	'S' : theano.shared(value = np.zeros((len(wordVectors), n_hidden), dtype=theano.config.floatX), borrow=True),
-	'B' : theano.shared(value = np.zeros((len(wordVectors)), dtype=theano.config.floatX), borrow=True)
+	'S' : theano.shared(value = np.zeros((20, n_hidden), dtype=theano.config.floatX), borrow=True),
+	'B' : theano.shared(value = np.zeros(20, dtype=theano.config.floatX), borrow=True)
 }
 encoder_params = {
 	'H2' : theano.shared(value = np.zeros((n_hidden, n_hidden), dtype=theano.config.floatX), borrow=True)
 }
 
-autoencoder = AutoEncoder(encoder_params, decoder_params, wordVectors, end_token, input = x, n_hidden = n_hidden)
+autoencoder = AutoEncoder(encoder_params, decoder_params, wordVectors, end_token, batch_size, input = x, n_hidden = n_hidden)
 cost, updates = autoencoder.get_cost_updates(learning_rate = learning_rate)
 train_autoencoder = theano.function([index], cost, updates = updates, givens = {x: X_train[index * batch_size : (index + 1) * batch_size]})
 
