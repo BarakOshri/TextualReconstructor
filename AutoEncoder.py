@@ -83,7 +83,7 @@ class AutoEncoder:
 		L = T.sqrt(T.sum(T.sqr(hidden_input - hidden_output)))
 
 		encoder_decoder_params = self.decoder_params + self.encoder.encoder_params
-		gparams = T.grad(L, [self.params.B])
+		gparams = T.grad(L, encoder_decoder_params)
 
 		updates = [(param, param - learning_rate * gparam) for param, gparam in zip(self.params, gparams)]
 
