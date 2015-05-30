@@ -51,12 +51,9 @@ class AutoEncoder:
 		#h0 = self.f(T.dot(self.params.H1, c) + T.dot(self.params.Y, s0) + T.dot(self.params.C, c))
 
 		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = 20)
-		y = theano.scan(fn = lambda x: T.argmax(x), sequences = s)
-		print T.argmax(s0).type
-		print self.end_token.type
-		s = ifelse(T.eq(T.argmax(s0), self.end_token), [T.argmax(s0)], y)
+		y = T.argmax(s, axis=1)
 
-		return s
+		return y
 
 	def _decoder_recurrence(self, ht_1, yt_1, hidden):
 		#print T.dot(self.params.H1, ht_1).type
@@ -83,10 +80,10 @@ class AutoEncoder:
 		output = self.get_reconstructed_input(hidden_input)
 		hidden_output = self.encoder.get_hidden_values(output)
 
-		L = np.linalg.norm(hidden_input - hidden_output)
+		L = T.sqrt(T.sum(T.sqr(hidden_input - hidden_output)))
 
 		encoder_decoder_params = self.decoder_params + self.encoder.encoder_params
-		gparams = T.grad(L, encoder_decoder_params)
+		gparams = T.grad(L, [self.params.B])
 
 		updates = [(param, param - learning_rate * gparam) for param, gparam in zip(self.params, gparams)]
 
