@@ -2,6 +2,7 @@ import theano
 from theano import tensor as T
 import numpy as np
 from attrdict import AttrDict
+from theano.ifelse import ifelse
 import sys
 import pdb
 
@@ -40,20 +41,42 @@ class AutoEncoder:
 		else:
 			self.x = input
 
-	def get_reconstructed_input(self, hidden):
-		y0 = theano.shared(np.zeros((20, 5)))
-		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [hidden[-1], y0], non_sequences = hidden[-1], n_steps = 40)
-		self.s = s
-		self.y = np.argmax(s, axis=1)
+	def get_reconstructed_input(self, c):
+		# Get first word
+		h0 = self.f(T.dot(self.params.H1, c) + T.dot(self.params.C, c))
+		a0 = T.dot(self.params.S, h0) + self.params.B
+		s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
+		#print s0.type
+		#print h0.type
+		#h0 = self.f(T.dot(self.params.H1, c) + T.dot(self.params.Y, s0) + T.dot(self.params.C, c))
+
+		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = 20)
+		y = theano.scan(fn = lambda x: T.argmax(x), sequences = s)
+		print T.argmax(s0).type
+		print self.end_token.type
+		s = ifelse(T.eq(T.argmax(s0), self.end_token), [T.argmax(s0)], y)
 
 		return s
 
 	def _decoder_recurrence(self, ht_1, yt_1, hidden):
+		#print T.dot(self.params.H1, ht_1).type
 		h_t = self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))
 		a = T.dot(self.params.S, h_t) + self.params.B
-		s_t = T.nnet.softmax(a.T)
+		s_t = T.reshape(T.nnet.softmax(a), a.shape)
+		#print s_t.type
+		#print h_t.type
 
 		return [h_t, s_t], theano.scan_module.until(T.eq(np.argmax(T.nnet.softmax(T.dot(self.params.S, self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))) + self.params.B)), self.end_token))
+
+	# def get_single_example(self, index):
+	# 	sentence = self.x[index]
+	# 	hidden_input = self.encoder.get_hidden_values(sentence)
+	# 	output = self.get_reconstructed_input(hidden_input)
+	# 	hidden_output = self.encoder.get_hidden_values(output)
+
+	# 	L = np.linalg.norm(hidden_input - hidden_output)
+
+	# 	return L
 
 	def get_cost_updates(self, learning_rate):
 		hidden_input = self.encoder.get_hidden_values(self.x)
@@ -83,7 +106,7 @@ class RNN:
 		self.n_hidden = n_hidden
 		self.batch_size = batch_size
 		self.f = f
-		self.h0 = theano.shared(np.zeros((self.n_hidden, batch_size)))
+		self.h0 = np.zeros((self.n_hidden))
 
 		self.wordVectors = wordVectors
 
@@ -93,8 +116,8 @@ class RNN:
 		return h_t
 
 	#Input is a list of word vectors
-	def get_hidden_values(self, input):
-		h, _ = theano.scan(fn = self._recurrence, sequences = input.T, outputs_info = self.h0)
+	def get_hidden_values(self, sentence):
+		h, _ = theano.scan(fn = self._recurrence, sequences = sentence, outputs_info = self.h0)
 		self.current_hidden = h[-1]
 
 		return self.current_hidden
