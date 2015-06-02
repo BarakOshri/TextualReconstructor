@@ -76,7 +76,8 @@ class dA(object):
         self,
         numpy_rng,
         theano_rng=None,
-        wvec_dim = 50
+        wvec_dim=50
+        n_dict=124120
         input=None,
         n_hidden=500,
         W=None,
@@ -130,56 +131,102 @@ class dA(object):
 
         """
         self.n_hidden = n_hidden
-        self.wvec_dim = wvec_dim
         self.end_token = 0
+        self.word_vectors = theano.shared(value = np.zeros((10, 50), dtype=theano.config.floatX), borrow=True)
+        self.n_dict = 10
 
         # create a Theano random generator that gives symbolic random values
         if not theano_rng:
             theano_rng = RandomStreams(numpy_rng.randint(2 ** 30))
 
         # note : W' was written as `W_prime` and b' as `b_prime`
-        if not W:
+
+        if not H1:
             # W is initialized with `initial_W` which is uniformely sampled
             # from -4*sqrt(6./(n_visible+n_hidden)) and
             # 4*sqrt(6./(n_hidden+n_visible))the output of uniform if
             # converted using asarray to dtype
             # theano.config.floatX so that the code is runable on GPU
-            initial_W = numpy.asarray(
+            initial_H1 = numpy.asarray(
                 numpy_rng.uniform(
                     low=-4 * numpy.sqrt(6. / (n_hidden)),
                     high=4 * numpy.sqrt(6. / (n_hidden)),
-                    size=(n_hidden, wvec_dim)
+                    size=(n_hidden, n_hidden)
                 ),
                 dtype=theano.config.floatX
             )
-            W = theano.shared(value=initial_W, name='W', borrow=True)
+            H1 = theano.shared(value=initial_H1, name='H1', borrow=True)
 
-        if not bvis:
-            bvis = theano.shared(
-                value=numpy.zeros(
-                    n_visible,
-                    dtype=theano.config.floatX
+        if not H2:
+            # W is initialized with `initial_W` which is uniformely sampled
+            # from -4*sqrt(6./(n_visible+n_hidden)) and
+            # 4*sqrt(6./(n_hidden+n_visible))the output of uniform if
+            # converted using asarray to dtype
+            # theano.config.floatX so that the code is runable on GPU
+            initial_H2 = numpy.asarray(
+                numpy_rng.uniform(
+                    low=-4 * numpy.sqrt(6. / (n_hidden)),
+                    high=4 * numpy.sqrt(6. / (n_hidden)),
+                    size=(n_hidden, n_hidden)
                 ),
-                borrow=True
+                dtype=theano.config.floatX
             )
+            H2 = theano.shared(value=initial_H2, name='H2', borrow=True)
 
-        if not bhid:
-            bhid = theano.shared(
-                value=numpy.zeros(
-                    n_hidden,
-                    dtype=theano.config.floatX
+        if not C:
+            # W is initialized with `initial_W` which is uniformely sampled
+            # from -4*sqrt(6./(n_visible+n_hidden)) and
+            # 4*sqrt(6./(n_hidden+n_visible))the output of uniform if
+            # converted using asarray to dtype
+            # theano.config.floatX so that the code is runable on GPU
+            initial_C = numpy.asarray(
+                numpy_rng.uniform(
+                    low=-4 * numpy.sqrt(6. / (n_hidden)),
+                    high=4 * numpy.sqrt(6. / (n_hidden)),
+                    size=(n_hidden, n_hidden)
                 ),
-                name='b',
-                borrow=True
+                dtype=theano.config.floatX
             )
+            C = theano.shared(value=initial_C, name='C', borrow=True)
 
-        self.W = W
-        # b corresponds to the bias of the hidden
-        self.b = bhid
-        # b_prime corresponds to the bias of the visible
-        self.b_prime = bvis
-        # tied weights, therefore W_prime is W transpose
-        self.W_prime = self.W.T
+        if not Y:
+            # W is initialized with `initial_W` which is uniformely sampled
+            # from -4*sqrt(6./(n_visible+n_hidden)) and
+            # 4*sqrt(6./(n_hidden+n_visible))the output of uniform if
+            # converted using asarray to dtype
+            # theano.config.floatX so that the code is runable on GPU
+            initial_Y = numpy.asarray(
+                numpy_rng.uniform(
+                    low=-4 * numpy.sqrt(6. / (n_hidden)),
+                    high=4 * numpy.sqrt(6. / (n_hidden)),
+                    size=(n_hidden, n_dict)
+                ),
+                dtype=theano.config.floatX
+            )
+            Y = theano.shared(value=initial_Y, name='Y', borrow=True)
+
+        if not S:
+            # W is initialized with `initial_W` which is uniformely sampled
+            # from -4*sqrt(6./(n_visible+n_hidden)) and
+            # 4*sqrt(6./(n_hidden+n_visible))the output of uniform if
+            # converted using asarray to dtype
+            # theano.config.floatX so that the code is runable on GPU
+            initial_Y = numpy.asarray(
+                numpy_rng.uniform(
+                    low=-4 * numpy.sqrt(6. / (n_hidden)),
+                    high=4 * numpy.sqrt(6. / (n_hidden)),
+                    size=(n_dict, n_hidden)
+                ),
+                dtype=theano.config.floatX
+            )
+            S = theano.shared(value=initial_S, name='S', borrow=True)
+
+        self.H1 = H1
+        self.H2 = H2
+        self.C = C
+        self.Y = Y
+        self.S = S
+
         self.theano_rng = theano_rng
         # if no input is given, generate a variable representing the input
         if input is None:
@@ -189,39 +236,7 @@ class dA(object):
         else:
             self.x = input
 
-        self.params = [self.W, self.b, self.b_prime]
-
-    # def get_corrupted_input(self, input, corruption_level):
-    #     """This function keeps ``1-corruption_level`` entries of the inputs the
-    #     same and zero-out randomly selected subset of size ``coruption_level``
-    #     Note : first argument of theano.rng.binomial is the shape(size) of
-    #            random numbers that it should produce
-    #            second argument is the number of trials
-    #            third argument is the probability of success of any trial
-
-    #             this will produce an array of 0s and 1s where 1 has a
-    #             probability of 1 - ``corruption_level`` and 0 with
-    #             ``corruption_level``
-
-    #             The binomial function return int64 data type by
-    #             default.  int64 multiplicated by the input
-    #             type(floatX) always return float64.  To keep all data
-    #             in floatX when floatX is float32, we set the dtype of
-    #             the binomial to floatX. As in our case the value of
-    #             the binomial is always 0 or 1, this don't change the
-    #             result. This is needed to allow the gpu to work
-    #             correctly as it only support float32 for now.
-
-    #     """
-    #     return self.theano_rng.binomial(size=input.shape, n=1,
-    #                                     p=1 - corruption_level,
-    #                                     dtype=theano.config.floatX) * input
-
-
-    def _rnn_recurrence(self, x_t, h_tm1):
-        h_t = self.f(T.dot(self.params.H2, h_tm1) + self.wordVectors[T.cast(x_t, 'int64')])
-
-        return h_t
+        self.params = [self.H1, self.H2, self.C, self.Y, self.S]
 
     #Input is a list of word vectors
     def get_hidden_values(self, sentence):
@@ -229,9 +244,14 @@ class dA(object):
 
         return h[-1]
 
+    def _rnn_recurrence(self, x_t, h_tm1):
+        h_t = self.f(T.dot(self.H1, h_tm1) + self.wordVectors[T.cast(x_t, 'int64')])
+
+        return h_t
+
     def get_reconstructed_input(self, c):
-        h0 = self.f(T.dot(self.params.H1, c) + T.dot(self.params.C, c))
-        a0 = T.dot(self.params.S, h0) + self.params.B
+        h0 = self.f(T.dot(self.H1, c) + T.dot(self.C, c))
+        a0 = T.dot(self.S1, h0)
         s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
 
         [h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = 20)
@@ -240,14 +260,11 @@ class dA(object):
         return y
 
     def _decoder_recurrence(self, ht_1, yt_1, hidden):
-        #print T.dot(self.params.H1, ht_1).type
-        h_t = self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))
-        a = T.dot(self.params.S, h_t) + self.params.B
+        h_t = self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
+        a = T.dot(self.S, h_t)
         s_t = T.reshape(T.nnet.softmax(a), a.shape)
-        #print s_t.type
-        #print h_t.type
 
-        return [h_t, s_t], theano.scan_module.until(T.eq(np.argmax(T.nnet.softmax(T.dot(self.params.S, self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))) + self.params.B)), self.end_token))
+        return [h_t, s_t], theano.scan_module.until(T.eq(np.argmax(T.nnet.softmax(T.dot(self.params.S, self.f(T.dot(self.params.H2, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))))), self.end_token))
 
     def get_cost_updates(self, corruption_level, learning_rate):
         """ This function computes the cost and the updates for one trainng
@@ -260,7 +277,7 @@ class dA(object):
         # note : we sum over the size of a datapoint; if we are using
         #        minibatches, L will be a vector, with one entry per
         #        example in minibatch
-        cost = T.sqrt(T.sum(T.sqr(hidden_input - hidden_output)))
+        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden)))
         # note : L is now a vector, where each element is the
         #        cross-entropy cost of the reconstruction of the
         #        corresponding example of the minibatch. We need to
@@ -299,12 +316,10 @@ def test_dA(learning_rate=0.1, training_epochs=15,
 
     """
     # List of 1-d word vector sentences
-    train_set_x = [theano.shared(numpy.zeros((i), dtype = theano.config.floatX), borrow=True) for i in range(30, 50)]
+    train_set_x = [theano.shared(numpy.zeros((i), dtype = theano.config.floatX), borrow=True) for i in range(30, 40)]
 
     # compute number of minibatches for training, validation and testing
     #n_train_batches = train_set_x.get_value(borrow=True).shape[0] / batch_size
-
-
 
     # start-snippet-2
     # allocate symbolic variables for the data
@@ -345,7 +360,14 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         }
     )
 
-    print "COMPILED"
+    print """
+  ______   ______   .___  ___. .______    __   __       _______  _______  
+ /      | /  __  \  |   \/   | |   _  \  |  | |  |     |   ____||       \ 
+|  ,----'|  |  |  | |  \  /  | |  |_)  | |  | |  |     |  |__   |  .--.  |
+|  |     |  |  |  | |  |\/|  | |   ___/  |  | |  |     |   __|  |  |  |  |
+|  `----.|  `--'  | |  |  |  | |  |      |  | |  `----.|  |____ |  '--'  |
+ \______| \______/  |__|  |__| | _|      |__| |_______||_______||_______/                                                                       
+    """
 
     # start_time = time.clock()
 
