@@ -35,6 +35,7 @@ import sys
 import time
 
 import numpy
+import numpy as np
 
 import theano
 import theano.tensor as T
@@ -76,11 +77,15 @@ class dA(object):
         self,
         numpy_rng,
         theano_rng=None,
-        wvec_dim=50
-        n_dict=124120
+        wvec_dim=50,
+        n_dict=124120,
         input=None,
         n_hidden=500,
-        W=None,
+        H1=None,
+        H2=None,
+        C=None,
+        Y=None,
+        S=None,
         bhid=None,
         bvis=None
     ):
@@ -134,6 +139,7 @@ class dA(object):
         self.end_token = 0
         self.word_vectors = theano.shared(value = np.zeros((10, 50), dtype=theano.config.floatX), borrow=True)
         self.n_dict = 10
+        self.f = T.nnet.sigmoid
 
         # create a Theano random generator that gives symbolic random values
         if not theano_rng:
@@ -211,7 +217,7 @@ class dA(object):
             # 4*sqrt(6./(n_hidden+n_visible))the output of uniform if
             # converted using asarray to dtype
             # theano.config.floatX so that the code is runable on GPU
-            initial_Y = numpy.asarray(
+            initial_S = numpy.asarray(
                 numpy_rng.uniform(
                     low=-4 * numpy.sqrt(6. / (n_hidden)),
                     high=4 * numpy.sqrt(6. / (n_hidden)),
@@ -236,22 +242,22 @@ class dA(object):
         else:
             self.x = input
 
-        self.params = [self.H1, self.H2, self.C, self.Y, self.S]
+        self.params = [self.H1, self.S, self.Y, self.C, self.H2]
 
     #Input is a list of word vectors
     def get_hidden_values(self, sentence):
-        h, _ = theano.scan(fn = self._rnn_recurrence, sequences = sentence, outputs_info = self.h0)
+        h0 = theano.shared(value=np.zeros((self.n_hidden), dtype=theano.config.floatX))
+        h, _ = theano.scan(fn = self._rnn_recurrence, sequences = sentence, outputs_info = h0)
 
         return h[-1]
 
     def _rnn_recurrence(self, x_t, h_tm1):
-        h_t = self.f(T.dot(self.H1, h_tm1) + self.wordVectors[T.cast(x_t, 'int64')])
-
+        h_t = self.f(T.dot(self.H1, h_tm1) + self.word_vectors[T.cast(x_t, 'int64')])
         return h_t
 
     def get_reconstructed_input(self, c):
         h0 = self.f(T.dot(self.H1, c) + T.dot(self.C, c))
-        a0 = T.dot(self.S1, h0)
+        a0 = T.dot(self.S, h0)
         s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
 
         [h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = 20)
@@ -259,12 +265,14 @@ class dA(object):
 
         return y
 
+        #return y
+
     def _decoder_recurrence(self, ht_1, yt_1, hidden):
         h_t = self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
         a = T.dot(self.S, h_t)
         s_t = T.reshape(T.nnet.softmax(a), a.shape)
 
-        return [h_t, s_t], theano.scan_module.until(T.eq(np.argmax(T.nnet.softmax(T.dot(self.params.S, self.f(T.dot(self.params.H2, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))))), self.end_token))
+        return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(T.nnet.softmax(T.dot(self.S, self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))))), self.end_token))
 
     def get_cost_updates(self, corruption_level, learning_rate):
         """ This function computes the cost and the updates for one trainng
@@ -272,12 +280,15 @@ class dA(object):
 
         #tilde_x = self.get_corrupted_input(self.x, corruption_level)
         hidden = self.get_hidden_values(self.x)
+        #hidden2 = self.get_hidden_values(self.x)
         output = self.get_reconstructed_input(hidden)
         output_hidden = self.get_hidden_values(output)
         # note : we sum over the size of a datapoint; if we are using
         #        minibatches, L will be a vector, with one entry per
         #        example in minibatch
-        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden)))
+        #cost = T.mean(hidden) - T.mean(output) + T.mean(output) - T.mean(output_hidden)
+        #cost = T.mean(hidden) - T.mean(output)
+        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden + output - output)))
         # note : L is now a vector, where each element is the
         #        cross-entropy cost of the reconstruction of the
         #        corresponding example of the minibatch. We need to
@@ -324,7 +335,7 @@ def test_dA(learning_rate=0.1, training_epochs=15,
     # start-snippet-2
     # allocate symbolic variables for the data
     index = T.lscalar()    # index to a [mini]batch
-    x = T.matrix('x')  # the data is presented as rasterized images
+    x = T.ivector('x')  # the data is presented as rasterized images
     # end-snippet-2
 
     # if not os.path.isdir(output_folder):
@@ -342,7 +353,7 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         numpy_rng=rng,
         theano_rng=theano_rng,
         input=x,
-        wvec_dim = 50
+        wvec_dim = 50,
         n_hidden=500
     )
 
@@ -366,8 +377,8 @@ def test_dA(learning_rate=0.1, training_epochs=15,
 |  ,----'|  |  |  | |  \  /  | |  |_)  | |  | |  |     |  |__   |  .--.  |
 |  |     |  |  |  | |  |\/|  | |   ___/  |  | |  |     |   __|  |  |  |  |
 |  `----.|  `--'  | |  |  |  | |  |      |  | |  `----.|  |____ |  '--'  |
- \______| \______/  |__|  |__| | _|      |__| |_______||_______||_______/                                                                       
-    """
+ \______| \______/  |__|  |__| | _|      |__| |_______||_______||_______/
+ """
 
     # start_time = time.clock()
 
