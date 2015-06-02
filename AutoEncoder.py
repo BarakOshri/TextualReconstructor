@@ -42,13 +42,9 @@ class AutoEncoder:
 			self.x = input
 
 	def get_reconstructed_input(self, c):
-		# Get first word
 		h0 = self.f(T.dot(self.params.H1, c) + T.dot(self.params.C, c))
 		a0 = T.dot(self.params.S, h0) + self.params.B
 		s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
-		#print s0.type
-		#print h0.type
-		#h0 = self.f(T.dot(self.params.H1, c) + T.dot(self.params.Y, s0) + T.dot(self.params.C, c))
 
 		[h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = 20)
 		y = T.argmax(s, axis=1)

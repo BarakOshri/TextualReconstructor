@@ -76,8 +76,8 @@ class dA(object):
         self,
         numpy_rng,
         theano_rng=None,
+        wvec_dim = 50
         input=None,
-        n_visible=784,
         n_hidden=500,
         W=None,
         bhid=None,
@@ -129,8 +129,9 @@ class dA(object):
 
 
         """
-        self.n_visible = n_visible
         self.n_hidden = n_hidden
+        self.wvec_dim = wvec_dim
+        self.end_token = 0
 
         # create a Theano random generator that gives symbolic random values
         if not theano_rng:
@@ -145,9 +146,9 @@ class dA(object):
             # theano.config.floatX so that the code is runable on GPU
             initial_W = numpy.asarray(
                 numpy_rng.uniform(
-                    low=-4 * numpy.sqrt(6. / (n_hidden + n_visible)),
-                    high=4 * numpy.sqrt(6. / (n_hidden + n_visible)),
-                    size=(n_visible, n_hidden)
+                    low=-4 * numpy.sqrt(6. / (n_hidden)),
+                    high=4 * numpy.sqrt(6. / (n_hidden)),
+                    size=(n_hidden, wvec_dim)
                 ),
                 dtype=theano.config.floatX
             )
@@ -190,60 +191,82 @@ class dA(object):
 
         self.params = [self.W, self.b, self.b_prime]
 
-    def get_corrupted_input(self, input, corruption_level):
-        """This function keeps ``1-corruption_level`` entries of the inputs the
-        same and zero-out randomly selected subset of size ``coruption_level``
-        Note : first argument of theano.rng.binomial is the shape(size) of
-               random numbers that it should produce
-               second argument is the number of trials
-               third argument is the probability of success of any trial
+    # def get_corrupted_input(self, input, corruption_level):
+    #     """This function keeps ``1-corruption_level`` entries of the inputs the
+    #     same and zero-out randomly selected subset of size ``coruption_level``
+    #     Note : first argument of theano.rng.binomial is the shape(size) of
+    #            random numbers that it should produce
+    #            second argument is the number of trials
+    #            third argument is the probability of success of any trial
 
-                this will produce an array of 0s and 1s where 1 has a
-                probability of 1 - ``corruption_level`` and 0 with
-                ``corruption_level``
+    #             this will produce an array of 0s and 1s where 1 has a
+    #             probability of 1 - ``corruption_level`` and 0 with
+    #             ``corruption_level``
 
-                The binomial function return int64 data type by
-                default.  int64 multiplicated by the input
-                type(floatX) always return float64.  To keep all data
-                in floatX when floatX is float32, we set the dtype of
-                the binomial to floatX. As in our case the value of
-                the binomial is always 0 or 1, this don't change the
-                result. This is needed to allow the gpu to work
-                correctly as it only support float32 for now.
+    #             The binomial function return int64 data type by
+    #             default.  int64 multiplicated by the input
+    #             type(floatX) always return float64.  To keep all data
+    #             in floatX when floatX is float32, we set the dtype of
+    #             the binomial to floatX. As in our case the value of
+    #             the binomial is always 0 or 1, this don't change the
+    #             result. This is needed to allow the gpu to work
+    #             correctly as it only support float32 for now.
 
-        """
-        return self.theano_rng.binomial(size=input.shape, n=1,
-                                        p=1 - corruption_level,
-                                        dtype=theano.config.floatX) * input
+    #     """
+    #     return self.theano_rng.binomial(size=input.shape, n=1,
+    #                                     p=1 - corruption_level,
+    #                                     dtype=theano.config.floatX) * input
 
-    def get_hidden_values(self, input):
-        """ Computes the values of the hidden layer """
-        return T.nnet.sigmoid(T.dot(input, self.W) + self.b)
 
-    def get_reconstructed_input(self, hidden):
-        """Computes the reconstructed input given the values of the
-        hidden layer
+    def _rnn_recurrence(self, x_t, h_tm1):
+        h_t = self.f(T.dot(self.params.H2, h_tm1) + self.wordVectors[T.cast(x_t, 'int64')])
 
-        """
-        return T.nnet.sigmoid(T.dot(hidden, self.W_prime) + self.b_prime)
+        return h_t
+
+    #Input is a list of word vectors
+    def get_hidden_values(self, sentence):
+        h, _ = theano.scan(fn = self._rnn_recurrence, sequences = sentence, outputs_info = self.h0)
+
+        return h[-1]
+
+    def get_reconstructed_input(self, c):
+        h0 = self.f(T.dot(self.params.H1, c) + T.dot(self.params.C, c))
+        a0 = T.dot(self.params.S, h0) + self.params.B
+        s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
+
+        [h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = 20)
+        y = T.argmax(s, axis=1)
+
+        return y
+
+    def _decoder_recurrence(self, ht_1, yt_1, hidden):
+        #print T.dot(self.params.H1, ht_1).type
+        h_t = self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))
+        a = T.dot(self.params.S, h_t) + self.params.B
+        s_t = T.reshape(T.nnet.softmax(a), a.shape)
+        #print s_t.type
+        #print h_t.type
+
+        return [h_t, s_t], theano.scan_module.until(T.eq(np.argmax(T.nnet.softmax(T.dot(self.params.S, self.f(T.dot(self.params.H1, ht_1) + T.dot(self.params.Y, yt_1) + T.dot(self.params.C, hidden))) + self.params.B)), self.end_token))
 
     def get_cost_updates(self, corruption_level, learning_rate):
         """ This function computes the cost and the updates for one trainng
         step of the dA """
 
-        tilde_x = self.get_corrupted_input(self.x, corruption_level)
-        y = self.get_hidden_values(tilde_x)
-        z = self.get_reconstructed_input(y)
+        #tilde_x = self.get_corrupted_input(self.x, corruption_level)
+        hidden = self.get_hidden_values(self.x)
+        output = self.get_reconstructed_input(hidden)
+        output_hidden = self.get_hidden_values(output)
         # note : we sum over the size of a datapoint; if we are using
         #        minibatches, L will be a vector, with one entry per
         #        example in minibatch
-        L = - T.sum(self.x * T.log(z) + (1 - self.x) * T.log(1 - z), axis=1)
+        cost = T.sqrt(T.sum(T.sqr(hidden_input - hidden_output)))
         # note : L is now a vector, where each element is the
         #        cross-entropy cost of the reconstruction of the
         #        corresponding example of the minibatch. We need to
         #        compute the average of all these to get the cost of
         #        the minibatch
-        cost = T.mean(L)
+        #cost = T.mean(L)
 
         # compute the gradients of the cost of the `dA` with respect
         # to its parameters
@@ -275,10 +298,11 @@ def test_dA(learning_rate=0.1, training_epochs=15,
     :param dataset: path to the picked dataset
 
     """
-    train_set_x = theano.shared(numpy.zeros((100, 784), dtype = theano.config.floatX), borrow=True)
+    # List of 1-d word vector sentences
+    train_set_x = [theano.shared(numpy.zeros((i), dtype = theano.config.floatX), borrow=True) for i in range(30, 50)]
 
     # compute number of minibatches for training, validation and testing
-    n_train_batches = train_set_x.get_value(borrow=True).shape[0] / batch_size
+    #n_train_batches = train_set_x.get_value(borrow=True).shape[0] / batch_size
 
 
 
@@ -303,7 +327,7 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         numpy_rng=rng,
         theano_rng=theano_rng,
         input=x,
-        n_visible=28 * 28,
+        wvec_dim = 50
         n_hidden=500
     )
 
@@ -317,7 +341,7 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         cost,
         updates=updates,
         givens={
-            x: train_set_x[index * batch_size: (index + 1) * batch_size]
+            x: train_set_x[index]
         }
     )
 
