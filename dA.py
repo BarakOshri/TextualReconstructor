@@ -327,15 +327,15 @@ def test_dA(learning_rate=0.1, training_epochs=15,
 
     """
     # List of 1-d word vector sentences
-    train_set_x = [theano.shared(numpy.zeros((i), dtype = theano.config.floatX), borrow=True) for i in range(30, 40)]
+    train_set_x = [theano.shared(numpy.zeros((30), dtype = theano.config.floatX), borrow=True) for i in range(30, 40)]
 
     # compute number of minibatches for training, validation and testing
     #n_train_batches = train_set_x.get_value(borrow=True).shape[0] / batch_size
 
     # start-snippet-2
     # allocate symbolic variables for the data
-    index = T.lscalar()    # index to a [mini]batch
-    x = T.ivector('x')  # the data is presented as rasterized images
+    # index to a [mini]batch
+     # the data is presented as rasterized images
     # end-snippet-2
 
     # if not os.path.isdir(output_folder):
@@ -348,6 +348,8 @@ def test_dA(learning_rate=0.1, training_epochs=15,
 
     rng = numpy.random.RandomState(123)
     theano_rng = RandomStreams(rng.randint(2 ** 30))
+
+    x = T.ivector('x') 
 
     da = dA(
         numpy_rng=rng,
@@ -363,12 +365,9 @@ def test_dA(learning_rate=0.1, training_epochs=15,
     )
 
     train_da = theano.function(
-        [index],
+        [x],
         cost,
         updates=updates,
-        givens={
-            x: train_set_x[index]
-        }
     )
 
     print """

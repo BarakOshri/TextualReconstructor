@@ -99,7 +99,7 @@ class RNN:
 		self.n_hidden = n_hidden
 		self.batch_size = batch_size
 		self.f = f
-		self.h0 = theano.shared(value=np.zeros((self.n_hidden), dtype=theano.config.floatX), borrow=True)
+		self.h0 = theano.shared(value=np.zeros((self.n_hidden), dtype=theano.config.floatX),
 
 		self.wordVectors = wordVectors
 
