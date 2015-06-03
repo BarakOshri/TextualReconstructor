@@ -409,6 +409,7 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         c = []
         for batch_index in xrange(100):
             c.append(train_da(X_train[batch_index]))
+            print 'Iteration %d, mean cost %d' % (batch_index, numpy.mean(c))
 
         print 'Training epoch %d, cost ' % epoch, numpy.mean(c)
 
