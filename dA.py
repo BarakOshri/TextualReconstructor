@@ -29,7 +29,7 @@
    Systems 19, 2007
 
 """
-
+import csv
 import os
 import sys
 import pickle
@@ -80,7 +80,7 @@ class dA(object):
         input_size=None,
         theano_rng=None,
         wvec_dim=50,
-        n_dict=1,
+        n_dict=None,
         input=None,
         n_hidden=50,
         H1=None,
@@ -89,6 +89,7 @@ class dA(object):
         Y=None,
         S=None,
         bhid=None,
+        word_vectors=None,
         bvis=None
     ):
         """
@@ -138,9 +139,8 @@ class dA(object):
 
         """
         self.n_hidden = n_hidden
-        self.end_token = 0
-        self.word_vectors = theano.shared(value = np.zeros((1, 50), dtype=theano.config.floatX), borrow=True)
-        self.n_dict = 1
+        self.word_vectors = word_vectors
+        self.n_dict = n_dict
         self.f = T.nnet.sigmoid
         self.input_size = input_size
 
@@ -251,7 +251,6 @@ class dA(object):
     def get_hidden_values(self, sentence):
         self.input_count = 0
         h0 = theano.shared(value=np.zeros((self.n_hidden), dtype=theano.config.floatX))
-        print sentence.type
         h, _ = theano.scan(fn = self._rnn_recurrence, sequences = sentence, outputs_info = h0)
 
         return h[-1]
@@ -294,7 +293,9 @@ class dA(object):
         #        example in minibatch
         #cost = T.mean(hidden) - T.mean(output) + T.mean(output) - T.mean(output_hidden)
         #cost = T.mean(hidden) - T.mean(output)
-        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden))) + T.sum(T.log(softmaxes[self.x]))
+
+
+        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden))) + T.sum(T.nnet.categorical_crossentropy(softmaxes, self.x))
         # note : L is now a vector, where each element is the
         #        cross-entropy cost of the reconstruction of the
         #        corresponding example of the minibatch. We need to
@@ -312,6 +313,20 @@ class dA(object):
         ]
 
         return (cost, updates)
+
+def build(src_filename, delimiter=',', header=True, quoting=csv.QUOTE_MINIMAL):    
+    # Thanks to Prof. Chris Potts for this function
+    reader = csv.reader(file(src_filename), delimiter=delimiter, quoting=quoting)
+    colnames = None
+    if header:
+        colnames = reader.next()
+        colnames = colnames[1: ]
+    mat = []    
+    rownames = []
+    for line in reader:        
+        rownames.append(line[0])            
+        mat.append(np.array(map(float, line[1: ])))
+    return (np.array(mat), rownames, colnames)
 
 
 def test_dA(learning_rate=0.1, training_epochs=15,
@@ -350,15 +365,17 @@ def test_dA(learning_rate=0.1, training_epochs=15,
     # BUILDING THE MODEL NO CORRUPTION #
     ####################################
 
+    glove_matrix, glove_vocab, _ = build('glove.6B.50d.txt', delimiter=' ', header=False, quoting=csv.QUOTE_NONE)
     f = open("all_wvi.pkl", 'r')
-    X = pickle.load(f)
-    #X_train = map(lambda x: np.array(x), X[1:101])
-    X_train = [np.zeros((20), dtype='int32'), np.zeros((20), dtype='int32')]
+    sentences = pickle.load(f)
+    glove_matrix = theano.shared(value=np.array(glove_matrix, dtype=theano.config.floatX), borrow=True)
+    X_train = map(lambda x: np.array(x), sentences[1:101])
+    #X_train = [np.zeros((20), dtype='int32'), np.zeros((20), dtype='int32')]
     #X_train = map(lambda x: theano.shared(np.array(x, dtype = theano.config.floatX), borrow=True), X[:100])
     #print X_train[0].type
+
     rng = numpy.random.RandomState(123)
     theano_rng = RandomStreams(rng.randint(2 ** 30))
-
     x = T.lvector('x')
     input_size = T.scalar(dtype='int64')
 
@@ -368,6 +385,8 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         input=x,
         wvec_dim=50,
         n_hidden=50,
+        word_vectors=glove_matrix,
+        n_dict=len(glove_vocab),
         input_size=input_size
     )
 
@@ -385,19 +404,10 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         }
     )
 
-    # start_time = time.clock()
-
-    ############
-    # TRAINING #
-    ############
-
-
-
-    # go through training epochs
+    start_time = time.clock()
     for epoch in xrange(training_epochs):
-        # go through trainng set
         c = []
-        for batch_index in xrange(2):
+        for batch_index in xrange(100):
             c.append(train_da(X_train[batch_index]))
 
         print 'Training epoch %d, cost ' % epoch, numpy.mean(c)
@@ -405,80 +415,6 @@ def test_dA(learning_rate=0.1, training_epochs=15,
     end_time = time.clock()
 
     training_time = (end_time - start_time)
-
-    print >> sys.stderr, ('The no corruption code for file ' +
-                          os.path.split(__file__)[1] +
-                          ' ran for %.2fm' % ((training_time) / 60.))
-    image = Image.fromarray(
-        tile_raster_images(X=da.W.get_value(borrow=True).T,
-                           img_shape=(28, 28), tile_shape=(10, 10),
-                           tile_spacing=(1, 1)))
-    image.save('filters_corruption_0.png')
-
-    # start-snippet-3
-    #####################################
-    # BUILDING THE MODEL CORRUPTION 30% #
-    #####################################
-
-    # rng = numpy.random.RandomState(123)
-    # theano_rng = RandomStreams(rng.randint(2 ** 30))
-
-    # da = dA(
-    #     numpy_rng=rng,
-    #     theano_rng=theano_rng,
-    #     input=x,
-    #     n_visible=28 * 28,
-    #     n_hidden=500
-    # )
-
-    # cost, updates = da.get_cost_updates(
-    #     corruption_level=0.3,
-    #     learning_rate=learning_rate
-    # )
-
-    # train_da = theano.function(
-    #     [index],
-    #     cost,
-    #     updates=updates,
-    #     givens={
-    #         x: train_set_x[index * batch_size: (index + 1) * batch_size]
-    #     }
-    # )
-
-    # start_time = time.clock()
-
-    # ############
-    # # TRAINING #
-    # ############
-
-    # # go through training epochs
-    # for epoch in xrange(training_epochs):
-    #     # go through trainng set
-    #     c = []
-    #     for batch_index in xrange(n_train_batches):
-    #         c.append(train_da(batch_index))
-
-    #     print 'Training epoch %d, cost ' % epoch, numpy.mean(c)
-
-    # end_time = time.clock()
-
-    # training_time = (end_time - start_time)
-
-    # print >> sys.stderr, ('The 30% corruption code for file ' +
-    #                       os.path.split(__file__)[1] +
-    #                       ' ran for %.2fm' % (training_time / 60.))
-    # # end-snippet-3
-
-    # # start-snippet-4
-    # # image = Image.fromarray(tile_raster_images(
-    # #     X=da.W.get_value(borrow=True).T,
-    # #     img_shape=(28, 28), tile_shape=(10, 10),
-    # #     tile_spacing=(1, 1)))
-    # # image.save('filters_corruption_30.png')
-    # # end-snippet-4
-
-    # os.chdir('../')
-
 
 if __name__ == '__main__':
     test_dA()
