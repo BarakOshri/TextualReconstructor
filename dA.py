@@ -32,6 +32,7 @@
 
 import os
 import sys
+import pickle
 import time
 
 import numpy
@@ -76,11 +77,12 @@ class dA(object):
     def __init__(
         self,
         numpy_rng,
+        input_size=None,
         theano_rng=None,
         wvec_dim=50,
-        n_dict=124120,
+        n_dict=1,
         input=None,
-        n_hidden=500,
+        n_hidden=50,
         H1=None,
         H2=None,
         C=None,
@@ -137,9 +139,10 @@ class dA(object):
         """
         self.n_hidden = n_hidden
         self.end_token = 0
-        self.word_vectors = theano.shared(value = np.zeros((10, 50), dtype=theano.config.floatX), borrow=True)
-        self.n_dict = 10
+        self.word_vectors = theano.shared(value = np.zeros((1, 50), dtype=theano.config.floatX), borrow=True)
+        self.n_dict = 1
         self.f = T.nnet.sigmoid
+        self.input_size = input_size
 
         # create a Theano random generator that gives symbolic random values
         if not theano_rng:
@@ -155,9 +158,9 @@ class dA(object):
             # theano.config.floatX so that the code is runable on GPU
             initial_H1 = numpy.asarray(
                 numpy_rng.uniform(
-                    low=-4 * numpy.sqrt(6. / (n_hidden)),
-                    high=4 * numpy.sqrt(6. / (n_hidden)),
-                    size=(n_hidden, n_hidden)
+                    low=-4 * numpy.sqrt(6. / (self.n_hidden)),
+                    high=4 * numpy.sqrt(6. / (self.n_hidden)),
+                    size=(self.n_hidden, self.n_hidden)
                 ),
                 dtype=theano.config.floatX
             )
@@ -171,9 +174,9 @@ class dA(object):
             # theano.config.floatX so that the code is runable on GPU
             initial_H2 = numpy.asarray(
                 numpy_rng.uniform(
-                    low=-4 * numpy.sqrt(6. / (n_hidden)),
-                    high=4 * numpy.sqrt(6. / (n_hidden)),
-                    size=(n_hidden, n_hidden)
+                    low=-4 * numpy.sqrt(6. / (self.n_hidden)),
+                    high=4 * numpy.sqrt(6. / (self.n_hidden)),
+                    size=(self.n_hidden, self.n_hidden)
                 ),
                 dtype=theano.config.floatX
             )
@@ -187,9 +190,9 @@ class dA(object):
             # theano.config.floatX so that the code is runable on GPU
             initial_C = numpy.asarray(
                 numpy_rng.uniform(
-                    low=-4 * numpy.sqrt(6. / (n_hidden)),
-                    high=4 * numpy.sqrt(6. / (n_hidden)),
-                    size=(n_hidden, n_hidden)
+                    low=-4 * numpy.sqrt(6. / (self.n_hidden)),
+                    high=4 * numpy.sqrt(6. / (self.n_hidden)),
+                    size=(self.n_hidden, self.n_hidden)
                 ),
                 dtype=theano.config.floatX
             )
@@ -203,9 +206,9 @@ class dA(object):
             # theano.config.floatX so that the code is runable on GPU
             initial_Y = numpy.asarray(
                 numpy_rng.uniform(
-                    low=-4 * numpy.sqrt(6. / (n_hidden)),
-                    high=4 * numpy.sqrt(6. / (n_hidden)),
-                    size=(n_hidden, n_dict)
+                    low=-4 * numpy.sqrt(6. / (self.n_hidden)),
+                    high=4 * numpy.sqrt(6. / (self.n_hidden)),
+                    size=(self.n_hidden, self.n_dict)
                 ),
                 dtype=theano.config.floatX
             )
@@ -219,9 +222,9 @@ class dA(object):
             # theano.config.floatX so that the code is runable on GPU
             initial_S = numpy.asarray(
                 numpy_rng.uniform(
-                    low=-4 * numpy.sqrt(6. / (n_hidden)),
-                    high=4 * numpy.sqrt(6. / (n_hidden)),
-                    size=(n_dict, n_hidden)
+                    low=-4 * numpy.sqrt(6. / (self.n_hidden)),
+                    high=4 * numpy.sqrt(6. / (self.n_hidden)),
+                    size=(self.n_dict, self.n_hidden)
                 ),
                 dtype=theano.config.floatX
             )
@@ -246,13 +249,16 @@ class dA(object):
 
     #Input is a list of word vectors
     def get_hidden_values(self, sentence):
+        self.input_count = 0
         h0 = theano.shared(value=np.zeros((self.n_hidden), dtype=theano.config.floatX))
+        print sentence.type
         h, _ = theano.scan(fn = self._rnn_recurrence, sequences = sentence, outputs_info = h0)
 
         return h[-1]
 
     def _rnn_recurrence(self, x_t, h_tm1):
-        h_t = self.f(T.dot(self.H1, h_tm1) + self.word_vectors[T.cast(x_t, 'int64')])
+        h_t = self.f(T.dot(self.H1, h_tm1) + self.word_vectors[x_t])
+        self.input_count += 1
         return h_t
 
     def get_reconstructed_input(self, c):
@@ -260,10 +266,10 @@ class dA(object):
         a0 = T.dot(self.S, h0)
         s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
 
-        [h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = 20)
+        [h, s], _ = theano.scan(fn = self._decoder_recurrence, outputs_info = [h0, s0], non_sequences = c, n_steps = self.input_size)
         y = T.argmax(s, axis=1)
 
-        return y
+        return y, s
 
         #return y
 
@@ -272,7 +278,7 @@ class dA(object):
         a = T.dot(self.S, h_t)
         s_t = T.reshape(T.nnet.softmax(a), a.shape)
 
-        return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(T.nnet.softmax(T.dot(self.S, self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))))), self.end_token))
+        return [h_t, s_t]
 
     def get_cost_updates(self, corruption_level, learning_rate):
         """ This function computes the cost and the updates for one trainng
@@ -281,14 +287,14 @@ class dA(object):
         #tilde_x = self.get_corrupted_input(self.x, corruption_level)
         hidden = self.get_hidden_values(self.x)
         #hidden2 = self.get_hidden_values(self.x)
-        output = self.get_reconstructed_input(hidden)
+        output, softmaxes = self.get_reconstructed_input(hidden)
         output_hidden = self.get_hidden_values(output)
         # note : we sum over the size of a datapoint; if we are using
         #        minibatches, L will be a vector, with one entry per
         #        example in minibatch
         #cost = T.mean(hidden) - T.mean(output) + T.mean(output) - T.mean(output_hidden)
         #cost = T.mean(hidden) - T.mean(output)
-        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden + output - output)))
+        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden))) + T.sum(T.log(softmaxes[self.x]))
         # note : L is now a vector, where each element is the
         #        cross-entropy cost of the reconstruction of the
         #        corresponding example of the minibatch. We need to
@@ -309,8 +315,7 @@ class dA(object):
 
 
 def test_dA(learning_rate=0.1, training_epochs=15,
-            dataset='mnist.pkl.gz',
-            batch_size=20, output_folder='dA_plots'):
+            dataset='mnist.pkl.gz', output_folder='dA_plots'):
 
     """
     This demo is tested on MNIST
@@ -327,8 +332,7 @@ def test_dA(learning_rate=0.1, training_epochs=15,
 
     """
     # List of 1-d word vector sentences
-    train_set_x = [theano.shared(numpy.zeros((30), dtype = theano.config.floatX), borrow=True) for i in range(30, 40)]
-
+    #X_train = [numpy.zeros((30)) for i in range(100)]
     # compute number of minibatches for training, validation and testing
     #n_train_batches = train_set_x.get_value(borrow=True).shape[0] / batch_size
 
@@ -346,17 +350,25 @@ def test_dA(learning_rate=0.1, training_epochs=15,
     # BUILDING THE MODEL NO CORRUPTION #
     ####################################
 
+    f = open("all_wvi.pkl", 'r')
+    X = pickle.load(f)
+    #X_train = map(lambda x: np.array(x), X[1:101])
+    X_train = [np.zeros((20), dtype='int32'), np.zeros((20), dtype='int32')]
+    #X_train = map(lambda x: theano.shared(np.array(x, dtype = theano.config.floatX), borrow=True), X[:100])
+    #print X_train[0].type
     rng = numpy.random.RandomState(123)
     theano_rng = RandomStreams(rng.randint(2 ** 30))
 
-    x = T.ivector('x') 
+    x = T.lvector('x')
+    input_size = T.scalar(dtype='int64')
 
     da = dA(
         numpy_rng=rng,
         theano_rng=theano_rng,
         input=x,
-        wvec_dim = 50,
-        n_hidden=500
+        wvec_dim=50,
+        n_hidden=50,
+        input_size=input_size
     )
 
     cost, updates = da.get_cost_updates(
@@ -368,16 +380,10 @@ def test_dA(learning_rate=0.1, training_epochs=15,
         [x],
         cost,
         updates=updates,
+        givens={
+            input_size: x.shape[0]
+        }
     )
-
-    print """
-  ______   ______   .___  ___. .______    __   __       _______  _______  
- /      | /  __  \  |   \/   | |   _  \  |  | |  |     |   ____||       \ 
-|  ,----'|  |  |  | |  \  /  | |  |_)  | |  | |  |     |  |__   |  .--.  |
-|  |     |  |  |  | |  |\/|  | |   ___/  |  | |  |     |   __|  |  |  |  |
-|  `----.|  `--'  | |  |  |  | |  |      |  | |  `----.|  |____ |  '--'  |
- \______| \______/  |__|  |__| | _|      |__| |_______||_______||_______/
- """
 
     # start_time = time.clock()
 
@@ -385,27 +391,29 @@ def test_dA(learning_rate=0.1, training_epochs=15,
     # TRAINING #
     ############
 
-    # # go through training epochs
-    # for epoch in xrange(training_epochs):
-    #     # go through trainng set
-    #     c = []
-    #     for batch_index in xrange(n_train_batches):
-    #         c.append(train_da(batch_index))
 
-    #     print 'Training epoch %d, cost ' % epoch, numpy.mean(c)
 
-    # end_time = time.clock()
+    # go through training epochs
+    for epoch in xrange(training_epochs):
+        # go through trainng set
+        c = []
+        for batch_index in xrange(2):
+            c.append(train_da(X_train[batch_index]))
 
-    # training_time = (end_time - start_time)
+        print 'Training epoch %d, cost ' % epoch, numpy.mean(c)
 
-    # print >> sys.stderr, ('The no corruption code for file ' +
-    #                       os.path.split(__file__)[1] +
-    #                       ' ran for %.2fm' % ((training_time) / 60.))
-    # image = Image.fromarray(
-    #     tile_raster_images(X=da.W.get_value(borrow=True).T,
-    #                        img_shape=(28, 28), tile_shape=(10, 10),
-    #                        tile_spacing=(1, 1)))
-    # image.save('filters_corruption_0.png')
+    end_time = time.clock()
+
+    training_time = (end_time - start_time)
+
+    print >> sys.stderr, ('The no corruption code for file ' +
+                          os.path.split(__file__)[1] +
+                          ' ran for %.2fm' % ((training_time) / 60.))
+    image = Image.fromarray(
+        tile_raster_images(X=da.W.get_value(borrow=True).T,
+                           img_shape=(28, 28), tile_shape=(10, 10),
+                           tile_spacing=(1, 1)))
+    image.save('filters_corruption_0.png')
 
     # start-snippet-3
     #####################################
