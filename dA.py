@@ -144,6 +144,13 @@ class dA(object):
         self.input_count += 1
         return h_t
 
+    def _decoder_recurrence(self, ht_1, yt_1, hidden):
+        h_t = self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
+        a = T.dot(self.S, h_t)
+        s_t = T.reshape(T.nnet.softmax(a), a.shape)
+
+        return [h_t, s_t]
+
     def get_reconstructed_input(self, c):
         h0 = self.f(T.dot(self.H1, c) + T.dot(self.C, c))
         a0 = T.dot(self.S, h0)
@@ -154,19 +161,12 @@ class dA(object):
 
         return y, s
 
-    def _decoder_recurrence(self, ht_1, yt_1, hidden):
-        h_t = self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
-        a = T.dot(self.S, h_t)
-        s_t = T.reshape(T.nnet.softmax(a), a.shape)
-
-        return [h_t, s_t]
-
     def _decoder_recurrence_until(self, ht_1, yt_1, hidden):
         h_t = self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
         a = T.dot(self.S, h_t)
         s_t = T.reshape(T.nnet.softmax(a), a.shape)
 
-        return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(s_t), self.end_token))
+        return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(s_t), self.end_token[0]) || T.eq(T.argmax(s_t), self.end_token[0]) || T.eq(T.argmax(s_t), self.end_token[1]))
 
     def get_new_reconstructed_input(self, c):
         h0 = self.f(T.dot(self.H1, c) + T.dot(self.C, c))
@@ -205,9 +205,11 @@ class dA(object):
     def get_cost_and_reconstructions(self, corruption_level):
         hidden = self.get_hidden_values(self.x)
         output, softmaxes = self.get_new_reconstructed_input(hidden)
-        output_hidden = 
+        output_hidden = self.get_hidden_values(output)
 
+        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden))) + T.sum(T.nnet.categorical_crossentropy(softmaxes, self.x))
 
+        return (cost, output)
 
 def build(src_filename, delimiter=',', header=True, quoting=csv.QUOTE_MINIMAL):    
     # Thanks to Prof. Chris Potts, Stanford University, for this function
@@ -300,19 +302,32 @@ def train_dA(learning_rate=0.1, training_epochs=15,
 
     print 'Finished training %d epochs, took %d seconds' % (training_epochs, training_time)
 
-    return cost_history, da.get_params(), dA, train_da
+    return cost_history, da.get_params(), train_da
 
-def test_dA(params_dict, print_count=10, data=None):
+def test_dA(params_dict, print_count=10, data=None, print_every=20):
     dA = make_dA(parms=params_dict, data=data)
 
-    train_da = theano.function(
-        [x],
-        cost,
-        updates=updates,
-        givens={
-            input_size: x.shape[0]
-        }
+    cost, reconstructions = dA.get_cost_and_reconstructions(
+        corruption_level=0.,
+        learning_rate=learning_rate
     )
+
+    test_da = theano.function(
+        [x],
+        [cost, reconstructions]
+    )
+
+    start_time = time.clock()
+    cost_history = []
+    reconstructions = []
+    for index in len(data):
+        cost, reconstruction = test_da(data[index])
+        cost_history.append(cost)
+        reconstructions.append(reconstruction)
+        if index % print_every == 0:
+            print 'Finished testing %d iterations, mean cost %d' % (index, numpy.mean(cost_history))
+
+    return cost_history, reconstructions[random.sample(range(len(data)), print_count)], test_da
 
 if __name__ == '__main__':
     f = open("all_wvi.pkl", 'r')
@@ -320,5 +335,5 @@ if __name__ == '__main__':
     train_sentences = sentences[:100]
     test_sentences = sentences[100:200]
 
-    cost_history, params, dA, train_da = train_dA(data=train_sentences, epochs=5)
-    sample_sentences, cost, test_da = test_dA(params, print_count=20, data=test_sentences)
+    cost_history, params, train_da = train_dA(data=train_sentences, epochs=2)
+    cost_history, reconstructions, test_da = test_dA(params, print_count=20, data=test_sentences)
