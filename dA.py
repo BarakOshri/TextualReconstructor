@@ -44,6 +44,7 @@ class dA(object):
         bhid=None,
         word_vectors=None,
         bvis=None
+        batch_size = 5
     ):
 
         self.n_hidden = n_hidden
@@ -51,6 +52,8 @@ class dA(object):
         self.n_dict = n_dict
         self.f = T.nnet.sigmoid
         self.input_size = input_size
+        self.batch_count = 0
+        self.batch_size = batch_size
 
         if not theano_rng:
             theano_rng = RandomStreams(numpy_rng.randint(2 ** 30))
@@ -124,6 +127,7 @@ class dA(object):
             self.x = input
 
         self.params = [self.H1, self.S, self.Y, self.C, self.H2]
+        self.updates = [0] * len(self.params)
 
     def get_params(self):
         return {'H1': self.H1, 'H2': self.H2, 'C': self.C, 'Y': self.Y, 'S': self.S}
@@ -157,10 +161,24 @@ class dA(object):
 
         return [h_t, s_t]
 
-    def get_cost_updates(self, corruption_level, learning_rate):
-        """ This function computes the cost and the updates for one trainng
-        step of the dA """
+    def _decoder_recurrence_until(self, ht_1, yt_1, hidden):
+        h_t = self.f(T.dot(self.H2, ht_1) + T.dot(self.Y, yt_1) + T.dot(self.C, hidden))
+        a = T.dot(self.S, h_t)
+        s_t = T.reshape(T.nnet.softmax(a), a.shape)
 
+        return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(s_t), self.end_token))
+
+    def get_new_reconstructed_input(self, c):
+        h0 = self.f(T.dot(self.H1, c) + T.dot(self.C, c))
+        a0 = T.dot(self.S, h0)
+        s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
+
+        [h, s], _ = theano.scan(fn = self._decoder_recurrence_until, outputs_info = [h0, s0], non_sequences = c, n_steps = self.input_size)
+        y = T.argmax(s, axis=1)
+
+        return y
+
+    def get_cost_updates(self, corruption_level, learning_rate):
         #tilde_x = self.get_corrupted_input(self.x, corruption_level)
         hidden = self.get_hidden_values(self.x)
         output, softmaxes = self.get_reconstructed_input(hidden)
@@ -170,15 +188,29 @@ class dA(object):
 
         gparams = T.grad(cost, self.params)
 
-        updates = [
-            (param, param - learning_rate * gparam)
-            for param, gparam in zip(self.params, gparams)
-        ]
+        if self.batch_count == self.batch_size:
+            updates = [
+                (self.params[i], self.params[i] - learning_rate * (gparams[i] + self.updates[i]))
+                for i in range(len(gparams))
+            ]
+            self.updates = [0] * len(self.params) 
+            self.batch_count = 0
+        else:
+            for i in range(len(gparams)):
+                self.updates[i] += gparams[i]
+            self.batch_count += 1
 
         return (cost, updates)
 
+    def get_cost_and_reconstructions(self, corruption_level):
+        hidden = self.get_hidden_values(self.x)
+        output, softmaxes = self.get_new_reconstructed_input(hidden)
+        output_hidden = 
+
+
+
 def build(src_filename, delimiter=',', header=True, quoting=csv.QUOTE_MINIMAL):    
-    # Thanks to Prof. Chris Potts for this function
+    # Thanks to Prof. Chris Potts, Stanford University, for this function
     reader = csv.reader(file(src_filename), delimiter=delimiter, quoting=quoting)
     colnames = None
     if header:
@@ -191,18 +223,46 @@ def build(src_filename, delimiter=',', header=True, quoting=csv.QUOTE_MINIMAL):
         mat.append(np.array(map(float, line[1: ])))
     return (np.array(mat), rownames, colnames)
 
+def make_dA(params=False, data=data):
+    glove_matrix, glove_vocab, _ = build('glove.6B.50d.txt', delimiter=' ', header=False, quoting=csv.QUOTE_NONE)
+    glove_matrix = theano.shared(value=np.array(glove_matrix, dtype=theano.config.floatX), borrow=True)
+
+    if params == False:
+        da = dA(
+            numpy_rng=rng,
+            theano_rng=theano_rng,
+            input=data,
+            wvec_dim=50,
+            n_hidden=50,
+            word_vectors=glove_matrix,
+            n_dict=len(glove_vocab),
+            input_size=input_size
+        )
+    else:
+        da = dA(
+            numpy_rng=rng,
+            theano_rng=theano_rng,
+            input=data,
+            wvec_dim=50,
+            n_hidden=50,
+            word_vectors=glove_matrix,
+            n_dict=len(glove_vocab),
+            input_size=input_size
+            H1=params['H1']
+            H2=params['H2']
+            C=params['C']
+            Y=params['Y']
+            S=params['S']
+        )
 
 def train_dA(learning_rate=0.1, training_epochs=15,
-            dataset='mnist.pkl.gz', output_folder='dA_plots', params_dict = None):
+            dataset='mnist.pkl.gz', output_folder='dA_plots', params_dict = False, print_every = 100
+            data=None):
 
     if not os.path.isdir(output_folder):
         os.makedirs(output_folder)
     os.chdir(output_folder)
 
-    glove_matrix, glove_vocab, _ = build('glove.6B.50d.txt', delimiter=' ', header=False, quoting=csv.QUOTE_NONE)
-    f = open("all_wvi.pkl", 'r')
-    sentences = pickle.load(f)
-    glove_matrix = theano.shared(value=np.array(glove_matrix, dtype=theano.config.floatX), borrow=True)
     X_train = map(lambda x: np.array(x), sentences[1:101])
 
     rng = numpy.random.RandomState(123)
@@ -210,35 +270,9 @@ def train_dA(learning_rate=0.1, training_epochs=15,
     x = T.lvector('x')
     input_size = T.scalar(dtype='int64')
 
-    if params_dict:
-        da = dA(
-            numpy_rng=rng,
-            theano_rng=theano_rng,
-            input=x,
-            wvec_dim=50,
-            n_hidden=50,
-            word_vectors=glove_matrix,
-            n_dict=len(glove_vocab),
-            input_size=input_size
-            H1=params_dict['H1']
-            H2=params_dict['H2']
-            C=params_dict['C']
-            Y=params_dict['Y']
-            S=params_dict['S']
-        )
-    else:
-        da = dA(
-            numpy_rng=rng,
-            theano_rng=theano_rng,
-            input=x,
-            wvec_dim=50,
-            n_hidden=50,
-            word_vectors=glove_matrix,
-            n_dict=len(glove_vocab),
-            input_size=input_size
-        )
+    dA = make_dA(params=params_dict, data=data)
 
-    cost, updates = da.get_cost_updates(
+    cost, updates = dA.get_cost_updates(
         corruption_level=0.,
         learning_rate=learning_rate
     )
@@ -255,22 +289,36 @@ def train_dA(learning_rate=0.1, training_epochs=15,
     start_time = time.clock()
     for epoch in xrange(training_epochs):
         cost_history = []
-        for batch_index in xrange(100):
-            cost_history.append(train_da(X_train[batch_index]))
-            print 'Iteration %d, mean cost %d' % (batch_index, numpy.mean(cost_history))
+        for index in len(data):
+            cost_history.append(train_da(X_train[index]))
+            if index % print_every == 0:
+                print 'Iteration %d, mean cost %d' % (index, numpy.mean(cost_history))
 
         print 'Training epoch %d, cost ' % epoch, numpy.mean(cost_history)
 
-    end_time = time.clock()
-    training_time = (end_time - start_time)
+    training_time = (time.clock() - start_time)
 
     print 'Finished training %d epochs, took %d seconds' % (training_epochs, training_time)
 
     return cost_history, da.get_params(), dA, train_da
 
-def test_dA(dA):
-    
+def test_dA(params_dict, print_count=10, data=None):
+    dA = make_dA(parms=params_dict, data=data)
+
+    train_da = theano.function(
+        [x],
+        cost,
+        updates=updates,
+        givens={
+            input_size: x.shape[0]
+        }
+    )
 
 if __name__ == '__main__':
-    cost_history, params, dA, train_da = train_dA()
-    sample_sentences, cost, test_da = test_dA(dA)
+    f = open("all_wvi.pkl", 'r')
+    sentences = pickle.load(f)
+    train_sentences = sentences[:100]
+    test_sentences = sentences[100:200]
+
+    cost_history, params, dA, train_da = train_dA(data=train_sentences, epochs=5)
+    sample_sentences, cost, test_da = test_dA(params, print_count=20, data=test_sentences)
