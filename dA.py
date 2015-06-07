@@ -18,6 +18,7 @@ import os
 import sys
 import pickle
 import time
+import random
 
 import numpy
 import numpy as np
@@ -165,17 +166,18 @@ class dA(object):
         a = T.dot(self.S, h_t)
         s_t = T.reshape(T.nnet.softmax(a), a.shape)
 
-        return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(s_t), self.end_token[0]) or T.eq(T.argmax(s_t), self.end_token[1]) or T.eq(T.argmax(s_t), self.end_token[2]))
+        return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(s_t), self.end_tokens[0]))
+        #return [h_t, s_t], theano.scan_module.until(T.eq(T.argmax(s_t), self.end_token[0]) or T.eq(T.argmax(s_t), self.end_token[1]) or T.eq(T.argmax(s_t), self.end_token[2]))
 
     def get_new_reconstructed_input(self, c):
         h0 = self.f(T.dot(self.H1, c) + T.dot(self.C, c))
         a0 = T.dot(self.S, h0)
         s0 = T.reshape(T.nnet.softmax(a0), a0.shape)
 
-        [h, s], _ = theano.scan(fn = self._decoder_recurrence_until, outputs_info = [h0, s0], non_sequences = c, n_steps = self.input_size)
+        [h, s], _ = theano.scan(fn = self._decoder_recurrence_until, outputs_info = [h0, s0], non_sequences = c, n_steps = 40)
         y = T.argmax(s, axis=1)
 
-        return y
+        return y, s
 
     def get_cost_updates(self, corruption_level, learning_rate):
         #tilde_x = self.get_corrupted_input(self.x, corruption_level)
@@ -212,7 +214,7 @@ class dA(object):
         output, softmaxes = self.get_new_reconstructed_input(hidden)
         output_hidden = self.get_hidden_values(output)
 
-        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden))) + T.sum(T.nnet.categorical_crossentropy(softmaxes, self.x))
+        cost = T.sqrt(T.sum(T.sqr(output_hidden - hidden)))
 
         return (cost, output)
 
@@ -311,11 +313,10 @@ def train_dA(learning_rate=0.1, training_epochs=15,
 def test_dA(params_dict, print_count=10, data=None, print_every=1):
     x = T.lvector('x')
 
-    dA = make_dA(parms=params_dict, data=x)
+    dA = make_dA(params=params_dict, data=x)
 
     cost, reconstructions = dA.get_cost_and_reconstructions(
         corruption_level=0.,
-        learning_rate=learning_rate
     )
 
     test_da = theano.function(
@@ -326,20 +327,43 @@ def test_dA(params_dict, print_count=10, data=None, print_every=1):
     start_time = time.clock()
     cost_history = []
     reconstructions = []
-    for index in len(data):
+    for index in range(len(data)):
         cost, reconstruction = test_da(data[index])
         cost_history.append(cost)
         reconstructions.append(reconstruction)
         if index % print_every == 0:
             print 'Finished testing %d iterations, mean cost %d' % (index, numpy.mean(cost_history))
 
-    return cost_history, reconstructions[random.sample(range(len(data)), print_count)], test_da
+    reconstruction_indices = random.sample(range(len(data)), print_count)
+
+    return cost_history, [reconstructions[i] for i in reconstruction_indices], test_da
+
+def indices_to_sentence(index_arrays, index_to_dict):
+    sentences = []
+    for index_array in index_arrays:
+        sentences.append(map(lambda x: glove_vocab[x], index_array))
+    return sentences
+
 
 if __name__ == '__main__':
     f = open("all_wvi.pkl", 'r')
     sentences = pickle.load(f)
-    train_sentences = map(lambda x: np.array(x), sentences[:3])
-    test_sentences = map(lambda x: np.array(x), sentences[3:6])
+    # train_sentences = map(lambda x: np.array(x), sentences[0:3])
 
-    cost_history, params, train_da = train_dA(data=train_sentences, training_epochs=1)
-    cost_history, reconstructions, test_da = test_dA(params, print_count=20, data=test_sentences)
+    theano.compile.mode.Mode(linker='cvm', optimizer='fast_run')
+
+    # cost_history, params, train_da = train_dA(data=train_sentences, training_epochs=2, learning_rate=0.01, params_dict=False)
+    # parameter_file = open("parameters.pkl", 'w')
+    # pickle.dump(params, parameter_file)
+    # pickle.dump(cost_history, parameter_file)
+
+    a = open("params.pkl", 'r')
+    parameters = pickle.load(a)
+
+    test_sentences = map(lambda x: np.array(x), sentences[5:15])
+    cost_history, reconstructions, test_da = test_dA(parameters, print_count=10, data=test_sentences)
+
+    _, glove_vocab, _ = build('glove.6B.50d.txt', delimiter=' ', header=False, quoting=csv.QUOTE_NONE)
+
+    print indices_to_sentence(reconstructions, glove_vocab)
+
