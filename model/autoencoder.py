@@ -33,6 +33,7 @@ class Autoencoder:
 		reconstructed_input_hidden_state = self.encoder.get_hidden_state(reconstructed_input)
 
 		L = T.sqrt(T.sum(T.sqr(input_hidden_state - reconstructed_input_hidden_state)))
+		# Needs to be immediately changed to the difference in reconstructions, not their hidden states!
 
 		all_params = self.decoder.params.values() + self.encoder.params.values()
 		gparams = T.grad(L, all_params)
