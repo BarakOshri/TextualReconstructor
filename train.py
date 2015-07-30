@@ -12,7 +12,7 @@ from autoencoder import *
 from wiki_to_vectors import *
 
 word_vector_file = "data/vectors.6B.200d.txt"
-wiki_files_directory = "data/wiki/"
+wiki_files_directory = "data_processing/wiki/"
 sentences_file = 'data/all_wvi.pkl'
 
 print 'Building word vectors'
